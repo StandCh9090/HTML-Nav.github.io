@@ -1,0 +1,1634 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0f172a">
+    <title>Offline Navi Pro - オフライン対応カーナビ</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter & Noto Sans JP -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Tone.js for Offline Sound Effects -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+        }
+        /* カスタムスクロールバー */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(156, 163, 175, 0.5);
+            border-radius: 3px;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.8; }
+            100% { transform: scale(2.2); opacity: 0; }
+        }
+        .pulse-animation {
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-white h-[100dvh] w-screen relative overflow-hidden">
+
+    <!-- メイン地図キャンバス -->
+    <canvas id="mapCanvas" class="w-full h-full block cursor-grab active:cursor-grabbing"></canvas>
+
+    <!-- 上部：ターンバイターン案内パネル（ルート案内中のみ表示） -->
+    <div id="navHeader" class="hidden absolute top-4 left-4 right-4 md:left-6 md:right-auto md:w-96 z-20 transition-all duration-300">
+        <div class="bg-emerald-600/95 backdrop-blur-md rounded-2xl shadow-2xl border border-emerald-400/30 p-4 flex items-center gap-4">
+            <!-- 進行方向アイコン -->
+            <div id="turnIconBox" class="bg-white text-emerald-700 rounded-xl p-3 flex-shrink-0 shadow-inner">
+                <svg id="turnIconSvg" class="w-10 h-10" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18"></path>
+                </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="flex items-baseline gap-1">
+                    <span id="nextTurnDist" class="text-3xl font-extrabold tracking-tight">300</span>
+                    <span id="nextTurnUnit" class="text-sm font-bold text-emerald-100">m 先</span>
+                </div>
+                <p id="nextTurnText" class="text-white font-bold text-base truncate">中央通り を右折</p>
+            </div>
+        </div>
+        <!-- 次の次の案内（サブパネル） -->
+        <div id="subTurnPanel" class="mt-2 bg-slate-900/90 backdrop-blur-md rounded-xl px-4 py-2 border border-slate-700/60 inline-flex items-center gap-2 text-xs text-slate-300 shadow-lg">
+            <span>その先:</span>
+            <span id="subTurnText" class="font-semibold text-white">駅前ロータリー 方面</span>
+        </div>
+    </div>
+
+    <!-- 右上：ステータス＆コントロールボタン群 -->
+    <div class="absolute top-4 right-4 z-20 flex flex-col gap-2.5 items-end">
+        <!-- オフライン/GPSステータスバッジ -->
+        <div class="flex items-center gap-2 bg-slate-900/85 backdrop-blur-md px-3.5 py-2 rounded-full border border-slate-700/70 shadow-lg">
+            <span id="offlineIndicator" class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+            <span id="statusLabel" class="text-xs font-bold tracking-wide text-slate-200">OFFLINE MAP READY</span>
+        </div>
+
+        <!-- 実道路データ取得＆オフライン保存ボタン -->
+        <button id="downloadAreaMapBtn" class="bg-emerald-600/90 hover:bg-emerald-500 active:scale-95 backdrop-blur-md px-3.5 py-2 rounded-full border border-emerald-400/40 shadow-lg transition flex items-center gap-1.5 text-xs font-bold text-white" title="現在地周辺の実際の道路網をダウンロードしてオフライン保存">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+            </svg>
+            <span id="mapCacheLabel">周辺道路をDL</span>
+        </button>
+
+        <!-- 視点切替 (3Dバードビュー / 2Dヘディングアップ) -->
+        <button id="toggleViewBtn" class="bg-slate-900/85 hover:bg-slate-800 active:scale-95 backdrop-blur-md p-3 rounded-2xl border border-slate-700/70 shadow-lg transition flex items-center justify-center w-12 h-12" title="2D/3D視点切替">
+            <span id="viewModeText" class="text-xs font-extrabold text-sky-400">3D</span>
+        </button>
+
+        <!-- 音声案内ミュート切替 -->
+        <button id="toggleVoiceBtn" class="bg-slate-900/85 hover:bg-slate-800 active:scale-95 backdrop-blur-md p-3 rounded-2xl border border-slate-700/70 shadow-lg transition flex items-center justify-center w-12 h-12" title="音声案内 ON/OFF">
+            <svg id="voiceOnIcon" class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path>
+            </svg>
+            <svg id="voiceOffIcon" class="hidden w-6 h-6 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15zM17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"></path>
+            </svg>
+        </button>
+
+        <!-- テーマ切替 (デイ/ナイトモード) -->
+        <button id="toggleThemeBtn" class="bg-slate-900/85 hover:bg-slate-800 active:scale-95 backdrop-blur-md p-3 rounded-2xl border border-slate-700/70 shadow-lg transition flex items-center justify-center w-12 h-12" title="昼/夜モード切替">
+            <svg id="moonIcon" class="w-5 h-5 text-indigo-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+            </svg>
+            <svg id="sunIcon" class="hidden w-5 h-5 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+            </svg>
+        </button>
+
+        <!-- ズームコントロール -->
+        <div class="bg-slate-900/85 backdrop-blur-md rounded-2xl border border-slate-700/70 shadow-lg flex flex-col overflow-hidden">
+            <button id="zoomInBtn" class="p-3 hover:bg-slate-800 active:bg-slate-700 text-lg font-bold leading-none w-12 h-11 flex items-center justify-center border-b border-slate-700/60">+</button>
+            <button id="zoomOutBtn" class="p-3 hover:bg-slate-800 active:bg-slate-700 text-lg font-bold leading-none w-12 h-11 flex items-center justify-center">−</button>
+        </div>
+
+        <!-- GPS現在地を中央に表示するボタン（常時表示） -->
+        <button id="recenterBtn" class="bg-sky-600 hover:bg-sky-500 active:scale-95 p-3 rounded-2xl border border-sky-400/40 shadow-lg shadow-sky-900/50 transition flex items-center justify-center w-12 h-12" title="GPS現在地を中央に表示">
+            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="7"></circle>
+                <circle cx="12" cy="12" r="2.5" fill="currentColor"></circle>
+                <path stroke-linecap="round" d="M12 2v3m0 14v3M2 12h3m14 0h3"></path>
+            </svg>
+        </button>
+    </div>
+
+    <!-- 下部UIコンテナ（スピードメーター・GPSバッジ・検索バーを整列配置） -->
+    <div class="fixed bottom-0 left-0 right-0 z-20 p-4 md:p-6 pointer-events-none flex flex-col md:flex-row md:items-end justify-between gap-3">
+        <!-- 左側：スピードメーター ＆ GPSステータス -->
+        <div class="flex items-end gap-2.5 pointer-events-auto self-start">
+            <!-- スピードメーター -->
+            <div class="bg-slate-900/90 backdrop-blur-md rounded-2xl border border-slate-700/70 px-4 py-3 shadow-xl min-w-[88px] text-center">
+                <div id="speedValue" class="text-3xl font-extrabold text-white tracking-tight leading-none">0</div>
+                <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1">km/h</div>
+            </div>
+
+            <!-- 実機GPS連動バッジ -->
+            <div class="bg-slate-900/90 backdrop-blur-md rounded-2xl border border-emerald-500/40 px-3.5 py-2.5 shadow-xl flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span class="text-xs font-bold text-emerald-300">実機GPSナビ</span>
+            </div>
+        </div>
+
+        <!-- 右側（モバイル時は下段）：目的地検索 ＆ ルート情報ドック -->
+        <div class="w-full md:w-96 pointer-events-auto">
+            <!-- ルート案内中のボトムバー -->
+            <div id="activeRoutePanel" class="hidden bg-slate-900/95 backdrop-blur-md rounded-2xl border border-slate-700/80 p-4 shadow-2xl">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <div class="text-xs text-slate-400 font-medium">目的地</div>
+                        <div id="destNameDisplay" class="text-base font-bold text-white truncate max-w-[200px]">中央駅</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="flex items-baseline justify-end gap-1">
+                            <span id="remTimeDisplay" class="text-2xl font-extrabold text-emerald-400">4</span>
+                            <span class="text-xs font-bold text-slate-300">分</span>
+                            <span class="text-slate-600 mx-1">|</span>
+                            <span id="remDistDisplay" class="text-lg font-bold text-white">1.2</span>
+                            <span class="text-xs text-slate-400">km</span>
+                        </div>
+                        <div id="etaDisplay" class="text-xs text-slate-400">到着予想 14:46</div>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button id="cancelRouteBtn" class="w-full bg-rose-600/90 hover:bg-rose-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition shadow-lg shadow-rose-950/50">
+                        案内終了
+                    </button>
+                </div>
+            </div>
+
+            <!-- 待機中の検索トリガーボタン -->
+            <div id="searchTriggerPanel" class="bg-slate-900/90 backdrop-blur-md rounded-2xl border border-slate-700/80 p-2.5 shadow-2xl flex items-center gap-2 w-full">
+                <button id="openSearchModalBtn" class="flex-1 min-w-0 bg-slate-800/90 hover:bg-slate-800 text-left px-3.5 py-3 rounded-xl flex items-center gap-2.5 transition border border-slate-700/60">
+                    <svg class="w-5 h-5 text-sky-400 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <span class="text-sm font-medium text-slate-300 truncate">オフライン施設・目的地を検索...</span>
+                </button>
+                <button id="quickHomeBtn" class="bg-indigo-600 hover:bg-indigo-500 active:scale-95 p-3 rounded-xl text-white transition shadow-lg flex-shrink-0" title="自宅へ帰る">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 目的地検索モーダル -->
+    <div id="searchModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4">
+        <div class="bg-slate-900 border border-slate-700/80 w-full md:max-w-lg rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <!-- モーダルヘッダー -->
+            <div class="p-4 border-b border-slate-800 flex items-center gap-3">
+                <div class="relative flex-1">
+                    <svg class="w-5 h-5 text-slate-400 absolute left-3.5 top-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <input type="text" id="poiSearchInput" placeholder="施設名、ジャンル（例: 駅、コンビニ、公園）" class="w-full bg-slate-800 text-white pl-11 pr-4 py-2.5 rounded-xl text-sm border border-slate-700 focus:outline-none focus:border-sky-500">
+                </div>
+                <button id="closeSearchModalBtn" class="p-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 text-sm font-bold">
+                    閉じる
+                </button>
+            </div>
+
+            <!-- カテゴリフィルター -->
+            <div class="px-4 py-2.5 bg-slate-900/50 border-b border-slate-800 flex gap-2 overflow-x-auto">
+                <button data-cat="ALL" class="cat-chip active px-3 py-1.5 rounded-lg text-xs font-bold bg-sky-600 text-white whitespace-nowrap">すべて</button>
+                <button data-cat="CUSTOM" class="cat-chip px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 whitespace-nowrap">★登録済みGPS地点</button>
+                <button data-cat="STATION" class="cat-chip px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 whitespace-nowrap">鉄道・駅</button>
+                <button data-cat="SHOP" class="cat-chip px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 whitespace-nowrap">商業・コンビニ</button>
+                <button data-cat="GAS" class="cat-chip px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 whitespace-nowrap">GS・駐車場</button>
+                <button data-cat="PARK" class="cat-chip px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 whitespace-nowrap">公園・観光</button>
+            </div>
+
+            <!-- 実機GPS用：現在地または緯度経度から目的地を新規登録するパネル -->
+            <div class="px-4 py-3 bg-slate-800/50 border-b border-slate-800 flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold text-sky-400">📍 実機GPS用 目的地登録（オフライン保存）</span>
+                    <button id="saveCurrentGpsBtn" class="text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-2.5 py-1 rounded-lg transition">
+                        現在地を地点登録
+                    </button>
+                </div>
+                <div class="flex gap-1.5">
+                    <input type="text" id="customNameInput" placeholder="地点名 (例: 道の駅)" class="flex-1 bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs border border-slate-700 focus:outline-none focus:border-sky-500">
+                    <input type="text" id="customLatLonInput" placeholder="緯度,経度 (例: 42.923,143.200)" class="w-40 bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs border border-slate-700 focus:outline-none focus:border-sky-500">
+                    <button id="addCustomLatLonBtn" class="bg-sky-600 hover:bg-sky-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">
+                        追加
+                    </button>
+                </div>
+            </div>
+
+            <!-- 検索結果リスト -->
+            <div id="poiListContainer" class="p-4 overflow-y-auto flex-1 space-y-2">
+                <!-- JSで動的に生成 -->
+            </div>
+
+            <!-- フッターヒント -->
+            <div class="px-4 py-3 bg-slate-950/60 border-t border-slate-800 text-xs text-slate-400 flex justify-between items-center">
+                <span>※地図上の道路や任意の場所を長押し/タップしても目的地に設定可能</span>
+                <span class="text-emerald-400 font-semibold">GPS/オフライン対応</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- カスタム通知トースト（alertの代替） -->
+    <div id="toastContainer" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex flex-col gap-2 items-center"></div>
+
+    <script>
+        /**
+         * Offline Navi Pro - 完全オフライン動作型カーナビゲーションエンジン
+         * 1. ローカル道路ネットワークグラフ（ノード＆エッジ）によるA*経路探索
+         * 2. HTML5 Canvasによる2D/3D疑似パース（バードビュー）リアルタイムレンダリング
+         * 3. 実機GPS（Geolocation API）＆ オフラインデモ走行シミュレーター
+         * 4. Web Speech APIによる日本語ターンバイターン音声案内
+         */
+
+        // ==========================================
+        // 1. オフライン地図データベース（道路網・施設・地形）
+        // 座標系: 1単位 = 約1メートル（基準点: 0, 0）
+        // ==========================================
+        const MAP_DATA = {
+            // 道路交差点・ウェイポイント（ノード）
+            nodes: [
+                { id: 'N1', x: -800, y: -800, name: '北西インター入口' },
+                { id: 'N2', x: -200, y: -800, name: '北通り西' },
+                { id: 'N3', x: 400,  y: -800, name: '北通り東' },
+                { id: 'N4', x: 1000, y: -800, name: '北東バイパス口' },
+
+                { id: 'N5', x: -800, y: -300, name: '西大通り北' },
+                { id: 'N6', x: -200, y: -300, name: '市役所前交差点' },
+                { id: 'N7', x: 400,  y: -300, name: '中央公園北' },
+                { id: 'N8', x: 1000, y: -300, name: '東大通り北' },
+
+                { id: 'N9',  x: -800, y: 200, name: '西大通り中央' },
+                { id: 'N10', x: -200, y: 200, name: '中央スクランブル' },
+                { id: 'N11', x: 400,  y: 200, name: '駅前ロータリー' },
+                { id: 'N12', x: 1000, y: 200, name: '東商業区入口' },
+
+                { id: 'N13', x: -800, y: 750, name: '南西住宅街' },
+                { id: 'N14', x: -200, y: 750, name: '南大通り西' },
+                { id: 'N15', x: 400,  y: 750, name: '南大通り東' },
+                { id: 'N16', x: 1000, y: 750, name: '南東スマートIC' },
+
+                // 斜めバイパス・バイパス接続ノード
+                { id: 'N17', x: 100,  y: -50, name: '中央ブリッジ' }
+            ],
+            // 道路リンク（エッジ）: type = 'highway' | 'main' | 'local'
+            edges: [
+                // 横方向（東西道路）
+                { from: 'N1', to: 'N2', type: 'highway', name: '北環状バイパス' },
+                { from: 'N2', to: 'N3', type: 'highway', name: '北環状バイパス' },
+                { from: 'N3', to: 'N4', type: 'highway', name: '北環状バイパス' },
+
+                { from: 'N5', to: 'N6', type: 'main', name: '市役所通り' },
+                { from: 'N6', to: 'N7', type: 'main', name: '市役所通り' },
+                { from: 'N7', to: 'N8', type: 'local', name: '公園北通り' },
+
+                { from: 'N9',  to: 'N10', type: 'main', name: '中央大通り' },
+                { from: 'N10', to: 'N11', type: 'main', name: '中央大通り' },
+                { from: 'N11', to: 'N12', type: 'main', name: '駅前大通り' },
+
+                { from: 'N13', to: 'N14', type: 'local', name: 'みなみ通り' },
+                { from: 'N14', to: 'N15', type: 'main', name: 'みなみ大通り' },
+                { from: 'N15', to: 'N16', type: 'highway', name: '南バイパス' },
+
+                // 縦方向（南北道路）
+                { from: 'N1', to: 'N5',  type: 'main', name: '西環状線' },
+                { from: 'N5', to: 'N9',  type: 'main', name: '西環状線' },
+                { from: 'N9', to: 'N13', type: 'local', name: '西住宅線' },
+
+                { from: 'N2', to: 'N6',  type: 'main', name: 'シンボルロード' },
+                { from: 'N6', to: 'N10', type: 'main', name: 'シンボルロード' },
+                { from: 'N10', to: 'N14', type: 'main', name: 'シンボルロード' },
+
+                { from: 'N3', to: 'N7',  type: 'local', name: 'パークサイド通り' },
+                { from: 'N7', to: 'N11', type: 'main', name: '駅北通り' },
+                { from: 'N11', to: 'N15', type: 'main', name: '駅南通り' },
+
+                { from: 'N4', to: 'N8',  type: 'highway', name: '東バイパス' },
+                { from: 'N8', to: 'N12', type: 'highway', name: '東バイパス' },
+                { from: 'N12', to: 'N16', type: 'highway', name: '東バイパス' },
+
+                // 斜め道路（ブリッジ経由）
+                { from: 'N6',  to: 'N17', type: 'local', name: 'リバーサイド通り' },
+                { from: 'N17', to: 'N11', type: 'local', name: 'リバーサイド通り' }
+            ],
+            // オフラインPOI（施設データ）
+            pois: [
+                { id: 'P1', name: '中央ターミナル駅', category: 'STATION', nodeId: 'N11', x: 450, y: 150, desc: '新幹線・在来線乗換駅 / ロータリーあり' },
+                { id: 'P2', name: '市役所・総合庁舎', category: 'PARK', nodeId: 'N6', x: -260, y: -350, desc: '24時間地下駐車場完備' },
+                { id: 'P3', name: 'セントラル・モール', category: 'SHOP', nodeId: 'N12', x: 940, y: 140, desc: '大型ショッピングセンター・EV充電器あり' },
+                { id: 'P4', name: '緑ヶ丘中央公園', category: 'PARK', nodeId: 'N7', x: 460, y: -360, desc: '展望台・ファミリー広場' },
+                { id: 'P5', name: 'エネオス 北バイパスSS', category: 'GAS', nodeId: 'N2', x: -160, y: -850, desc: '24時間営業・セルフ給油・洗車機' },
+                { id: 'P6', name: 'セブンイレブン 中央店', category: 'SHOP', nodeId: 'N10', x: -150, y: 240, desc: '駐車場15台・ATM・イートイン' },
+                { id: 'P7', name: '南東スマートIC (高速入口)', category: 'GAS', nodeId: 'N16', x: 1040, y: 790, desc: 'ETC専用インターチェンジ' },
+                { id: 'P8', name: '自宅（マイホーム登録地）', category: 'HOME', nodeId: 'N13', x: -840, y: 780, desc: '登録済み自宅地点' },
+                { id: 'P9', name: '道の駅 リバーサイド', category: 'SHOP', nodeId: 'N17', x: 60, y: -90, desc: '特産品直売所・休憩スペース' }
+            ],
+            // 河川ポリゴン（背景装飾用）
+            river: [
+                { x: -1100, y: -550 },
+                { x: -300,  y: -250 },
+                { x: 200,   y: 50 },
+                { x: 800,   y: 500 },
+                { x: 1300,  y: 950 }
+            ],
+            // 公園エリア
+            parks: [
+                { x: 420, y: -750, w: 520, h: 400, name: '緑ヶ丘中央公園' },
+                { x: -750, y: 250, w: 480, h: 440, name: '西市民の森' }
+            ]
+        };
+
+        // ==========================================
+        // 2. アプリケーション状態管理
+        // ==========================================
+        const state = {
+            // 自車状態
+            car: {
+                x: -200,
+                y: 200, // 初期位置：中央スクランブル付近
+                heading: 0, // ラジアン（0 = 東, -PI/2 = 北）
+                speed: 0,   // km/h
+                targetSpeed: 45
+            },
+            // カメラ・表示状態
+            camera: {
+                x: -200,
+                y: 200,
+                zoom: 0.85,
+                is3D: true,
+                followCar: true,
+                isDragging: false,
+                dragStartX: 0,
+                dragStartY: 0
+            },
+            // ナビゲーション状態
+            nav: {
+                isNavigating: false,
+                destination: null,
+                routeNodes: [], // ノードオブジェクトの配列
+                currentSegmentIdx: 0,
+                lastSpokenKey: ''
+            },
+            // システム設定
+            settings: {
+                isNightMode: true,
+                voiceEnabled: true,
+                gpsWatchId: null,
+                gpsOriginLat: null,
+                gpsOriginLon: null,
+                currentLat: null,
+                currentLon: null,
+                lastValidLat: null,
+                lastValidLon: null,
+                gpsAccuracy: null
+            }
+        };
+
+        // LocalStorageからユーザー登録済みGPS地点を読み込み
+        function loadSavedCustomPois() {
+            try {
+                const saved = JSON.parse(localStorage.getItem('offline_navi_custom_pois') || '[]');
+                saved.forEach(item => {
+                    if (!MAP_DATA.pois.some(p => p.id === item.id)) {
+                        MAP_DATA.pois.push(item);
+                    }
+                });
+            } catch (e) {}
+        }
+
+        // ==========================================
+        // PWA（ウェブアプリ化）＆ オフラインキャッシュ・スリープ防止
+        // ==========================================
+        let wakeLock = null;
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator && !wakeLock) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => { wakeLock = null; });
+                }
+            } catch (e) {}
+        }
+
+        function initWebAppPWA() {
+            // 動的Web App Manifestの生成（スマホの「ホーム画面に追加」でネイティブアプリ風に起動可能に）
+            const manifest = {
+                name: "Offline Navi Pro - オフライン対応カーナビ",
+                short_name: "OfflineNavi",
+                start_url: location.href,
+                display: "standalone",
+                background_color: "#020617",
+                theme_color: "#0f172a",
+                icons: [{
+                    src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%230ea5e9'/%3E%3Cpath d='M50 18 L76 76 L50 62 L24 76 Z' fill='white'/%3E%3C/svg%3E",
+                    sizes: "192x192",
+                    type: "image/svg+xml"
+                }]
+            };
+            const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+            const manifestLink = document.createElement('link');
+            manifestLink.rel = 'manifest';
+            manifestLink.href = URL.createObjectURL(manifestBlob);
+            document.head.appendChild(manifestLink);
+
+            // Service Worker登録（オフライン時のHTMLキャッシュ）
+            if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+                const swCode = `
+                    const CACHE_NAME = 'offline-navi-v1';
+                    self.addEventListener('install', e => {
+                        e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll([self.location.href])));
+                        self.skipWaiting();
+                    });
+                    self.addEventListener('fetch', e => {
+                        e.respondWith(caches.match(e.request).then(res => res || fetch(e.request).catch(() => caches.match(self.location.href))));
+                    });
+                `;
+                const swBlob = new Blob([swCode], { type: 'application/javascript' });
+                navigator.serviceWorker.register(URL.createObjectURL(swBlob)).catch(() => {});
+            }
+        }
+
+        // OpenStreetMap (Overpass API) から現在地周辺の実際の道路データを取得してオフライン保存
+        async function downloadRealAreaRoadMap() {
+            if (state.settings.currentLat === null || state.settings.currentLon === null) {
+                showToast('先にGPSの現在地測位が完了するまでお待ちください', 'warn');
+                return;
+            }
+            const btnLabel = document.getElementById('mapCacheLabel');
+            btnLabel.textContent = '道路取得中...';
+            showToast('現在地周辺(半径2.5km)の実際の道路網を取得しています...', 'info');
+
+            const lat = state.settings.currentLat;
+            const lon = state.settings.currentLon;
+            const radius = 2500; // 2.5km圏内
+
+            const query = `[out:json][timeout:15];(way["highway"~"motorway|trunk|primary|secondary|tertiary|residential"](around:${radius},${lat},${lon});node(w););out body;`;
+            try {
+                const res = await fetch('https://overpass-api.de/api/interpreter', {
+                    method: 'POST',
+                    body: query
+                });
+                if (!res.ok) throw new Error('Network error');
+                const data = await res.json();
+
+                state.settings.gpsOriginLat = lat;
+                state.settings.gpsOriginLon = lon;
+
+                const osmNodes = new Map();
+                const ways = [];
+                data.elements.forEach(el => {
+                    if (el.type === 'node') osmNodes.set(el.id, el);
+                    else if (el.type === 'way' && el.nodes && el.nodes.length > 1) ways.push(el);
+                });
+
+                const newNodes = [];
+                const addedNodeIds = new Set();
+                const newEdges = [];
+
+                ways.forEach(way => {
+                    const hw = way.tags?.highway || 'local';
+                    const edgeType = (hw === 'motorway' || hw === 'trunk') ? 'highway' :
+                                     (hw === 'primary' || hw === 'secondary') ? 'main' : 'local';
+                    const roadName = way.tags?.name || '一般道';
+
+                    for (let i = 0; i < way.nodes.length - 1; i++) {
+                        const nA = osmNodes.get(way.nodes[i]);
+                        const nB = osmNodes.get(way.nodes[i + 1]);
+                        if (!nA || !nB) continue;
+
+                        if (!addedNodeIds.has(nA.id)) {
+                            const pA = latLonToLocal(nA.lat, nA.lon);
+                            newNodes.push({ id: String(nA.id), x: pA.x, y: pA.y, name: roadName });
+                            addedNodeIds.add(nA.id);
+                        }
+                        if (!addedNodeIds.has(nB.id)) {
+                            const pB = latLonToLocal(nB.lat, nB.lon);
+                            newNodes.push({ id: String(nB.id), x: pB.x, y: pB.y, name: roadName });
+                            addedNodeIds.add(nB.id);
+                        }
+                        newEdges.push({ from: String(nA.id), to: String(nB.id), type: edgeType, name: roadName });
+                    }
+                });
+
+                if (newNodes.length > 10) {
+                    MAP_DATA.nodes = newNodes;
+                    MAP_DATA.edges = newEdges;
+                    MAP_DATA.parks = [];
+                    MAP_DATA.river = [];
+                    localStorage.setItem('offline_navi_osm_cache', JSON.stringify({
+                        originLat: lat, originLon: lon, nodes: newNodes, edges: newEdges
+                    }));
+                    btnLabel.textContent = '実道路保存済';
+                    showToast(`実際の道路データ（${newEdges.length}区間）をオフライン保存しました！`, 'success');
+                } else {
+                    throw new Error('No roads found');
+                }
+            } catch (e) {
+                btnLabel.textContent = '周辺道路をDL';
+                showToast('道路データの取得に失敗しました（オフラインまたは通信混雑中）', 'warn');
+            }
+        }
+
+        function loadCachedOsmMap() {
+            try {
+                const raw = localStorage.getItem('offline_navi_osm_cache');
+                if (!raw) return;
+                const cached = JSON.parse(raw);
+                if (cached && cached.nodes && cached.edges) {
+                    state.settings.gpsOriginLat = cached.originLat;
+                    state.settings.gpsOriginLon = cached.originLon;
+                    MAP_DATA.nodes = cached.nodes;
+                    MAP_DATA.edges = cached.edges;
+                    MAP_DATA.parks = [];
+                    MAP_DATA.river = [];
+                    document.getElementById('mapCacheLabel').textContent = '実道路保存済';
+                }
+            } catch (e) {}
+        }
+
+        // 緯度・経度 <-> ローカル平面座標(m) 相互変換
+        function latLonToLocal(lat, lon) {
+            if (state.settings.gpsOriginLat === null || state.settings.gpsOriginLon === null) {
+                return { x: 0, y: 0 };
+            }
+            const dy = -(lat - state.settings.gpsOriginLat) * 111320;
+            const dx = (lon - state.settings.gpsOriginLon) * 111320 * Math.cos(state.settings.gpsOriginLat * Math.PI / 180);
+            return { x: dx, y: dy };
+        }
+
+        function localToLatLon(x, y) {
+            if (state.settings.gpsOriginLat === null || state.settings.gpsOriginLon === null) {
+                return null;
+            }
+            const lat = state.settings.gpsOriginLat - (y / 111320);
+            const lon = state.settings.gpsOriginLon + (x / (111320 * Math.cos(state.settings.gpsOriginLat * Math.PI / 180)));
+            return { lat, lon };
+        }
+
+        // 2点間の緯度経度から進行方位（ラジアン）を計算
+        function calcBearingRad(lat1, lon1, lat2, lon2) {
+            const p1 = latLonToLocal(lat1, lon1);
+            const p2 = latLonToLocal(lat2, lon2);
+            return Math.atan2(p2.y - p1.y, p2.x - p1.x);
+        }
+
+        // DOM要素の取得
+        const canvas = document.getElementById('mapCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // ==========================================
+        // 3. ユーティリティ＆通知・音声システム
+        // ==========================================
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            const bgClass = type === 'success' ? 'bg-emerald-600/95 border-emerald-400/50' :
+                            type === 'warn' ? 'bg-amber-600/95 border-amber-400/50' :
+                            'bg-slate-800/95 border-slate-600/50';
+            toast.className = `${bgClass} text-white text-xs font-bold px-4 py-2.5 rounded-full shadow-xl border backdrop-blur-md transition-all duration-300 transform translate-y-0 opacity-100`;
+            toast.textContent = message;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', '-translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 2800);
+        }
+
+        // Tone.js 効果音（外部ファイル不要）
+        function playChime(type = 'turn') {
+            if (!state.settings.voiceEnabled) return;
+            try {
+                if (Tone.context.state !== 'running') Tone.start();
+                const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+                synth.volume.value = -12;
+                if (type === 'start') {
+                    synth.triggerAttackRelease(["C5", "E5", "G5"], "16n");
+                } else if (type === 'arrive') {
+                    synth.triggerAttackRelease(["C5", "E5", "G5", "C6"], "8n");
+                } else {
+                    synth.triggerAttackRelease(["E5", "A5"], "32n");
+                }
+            } catch (e) {
+                // オーディオ初期化前のエラーを無視
+            }
+        }
+
+        // Web Speech API 日本語音声合成
+        function speakJapanese(text, force = false) {
+            if (!state.settings.voiceEnabled) return;
+            if (!force && state.nav.lastSpokenKey === text) return;
+            state.nav.lastSpokenKey = text;
+
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utter = new SpeechSynthesisUtterance(text);
+                utter.lang = 'ja-JP';
+                utter.rate = 1.1;
+                utter.pitch = 1.0;
+                window.speechSynthesis.speak(utter);
+            }
+        }
+
+        // 2点間の距離（メートル）
+        function getDistance(p1, p2) {
+            return Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        }
+
+        // ==========================================
+        // 4. オフライン経路探索エンジン (A* アルゴリズム)
+        // ==========================================
+        function findNearestNode(x, y) {
+            let nearest = null;
+            let minDist = Infinity;
+            for (const node of MAP_DATA.nodes) {
+                const d = Math.hypot(node.x - x, node.y - y);
+                if (d < minDist) {
+                    minDist = d;
+                    nearest = node;
+                }
+            }
+            return nearest;
+        }
+
+        function getNeighbors(nodeId) {
+            const neighbors = [];
+            for (const edge of MAP_DATA.edges) {
+                if (edge.from === nodeId) {
+                    const target = MAP_DATA.nodes.find(n => n.id === edge.to);
+                    if (target) neighbors.push({ node: target, edge });
+                } else if (edge.to === nodeId) {
+                    const target = MAP_DATA.nodes.find(n => n.id === edge.from);
+                    if (target) neighbors.push({ node: target, edge });
+                }
+            }
+            return neighbors;
+        }
+
+        function calculateOfflineRoute(startNodeId, goalNodeId) {
+            const startNode = MAP_DATA.nodes.find(n => n.id === startNodeId);
+            const goalNode = MAP_DATA.nodes.find(n => n.id === goalNodeId);
+            if (!startNode || !goalNode) return [];
+
+            const openSet = new Set([startNode.id]);
+            const cameFrom = {};
+            const gScore = {};
+            const fScore = {};
+
+            MAP_DATA.nodes.forEach(n => {
+                gScore[n.id] = Infinity;
+                fScore[n.id] = Infinity;
+            });
+
+            gScore[startNode.id] = 0;
+            fScore[startNode.id] = getDistance(startNode, goalNode);
+
+            while (openSet.size > 0) {
+                // fScoreが最小のノードを選択
+                let currentId = null;
+                let lowestF = Infinity;
+                for (const id of openSet) {
+                    if (fScore[id] < lowestF) {
+                        lowestF = fScore[id];
+                        currentId = id;
+                    }
+                }
+
+                if (currentId === goalNode.id) {
+                    // パスを再構築
+                    const path = [];
+                    let curr = currentId;
+                    while (curr) {
+                        path.unshift(MAP_DATA.nodes.find(n => n.id === curr));
+                        curr = cameFrom[curr];
+                    }
+                    return path;
+                }
+
+                openSet.delete(currentId);
+                const currentNode = MAP_DATA.nodes.find(n => n.id === currentId);
+
+                for (const { node: neighbor, edge } of getNeighbors(currentId)) {
+                    // バイパス（highway）は速度が速いのでコストを優遇
+                    const speedFactor = edge.type === 'highway' ? 0.75 : (edge.type === 'main' ? 0.9 : 1.1);
+                    const tentativeG = gScore[currentId] + getDistance(currentNode, neighbor) * speedFactor;
+
+                    if (tentativeG < gScore[neighbor.id]) {
+                        cameFrom[neighbor.id] = currentId;
+                        gScore[neighbor.id] = tentativeG;
+                        fScore[neighbor.id] = tentativeG + getDistance(neighbor, goalNode);
+                        openSet.add(neighbor.id);
+                    }
+                }
+            }
+            return [];
+        }
+
+        // ルート案内開始処理
+        function startNavigationTo(poi) {
+            // 実機GPS座標が紐づいているPOIの場合、現在のGPS基準点に合わせてローカル座標を再計算
+            if (poi.lat !== undefined && poi.lon !== undefined && state.settings.gpsOriginLat !== null) {
+                const localPos = latLonToLocal(poi.lat, poi.lon);
+                poi.x = localPos.x;
+                poi.y = localPos.y;
+            }
+
+            let fullRoute = [];
+
+            // 実機GPSモード時で、道路ネットワーク外（遠方または任意地点）へのナビの場合は
+            // 現在地からのダイレクト誘導＋中間ウェイポイント自動生成で確実にナビ可能にする
+            const startNode = findNearestNode(state.car.x, state.car.y);
+            const distToRoadNet = getDistance(state.car, startNode);
+
+            if (state.settings.useRealGps && (poi.lat !== undefined || distToRoadNet > 600)) {
+                const midX = (state.car.x + poi.x) / 2;
+                const midY = (state.car.y + poi.y) / 2;
+                fullRoute = [
+            // 実機GPSモードで道路ネットワーク外（遠方または任意地点）へのナビの場合は
+            // 現在地からのダイレクト誘導＋中間ウェイポイント自動生成で確実にナビ可能にする
+            const startNode = findNearestNode(state.car.x, state.car.y);
+            const distToRoadNet = getDistance(state.car, startNode);
+
+            if (poi.lat !== undefined || distToRoadNet > 600) {
+                const midX = (state.car.x + poi.x) / 2;
+                const midY = (state.car.y + poi.y) / 2;
+                fullRoute = [
+                    { id: 'CURR', x: state.car.x, y: state.car.y, name: '現在地' },
+                    { id: 'MID', x: midX, y: midY, name: `${poi.name} 方面` },
+                    { id: 'DEST', x: poi.x, y: poi.y, name: poi.name }
+                ];
+            } else {
+                const targetNodeId = poi.nodeId || findNearestNode(poi.x, poi.y).id;
+                const route = calculateOfflineRoute(startNode.id, targetNodeId);
+                if (route.length === 0) {
+                    fullRoute = [
+                        { id: 'CURR', x: state.car.x, y: state.car.y, name: '現在地' },
+                        { id: 'DEST', x: poi.x, y: poi.y, name: poi.name }
+                    ];
+                } else {
+                    fullRoute = [...route, { id: 'DEST', x: poi.x, y: poi.y, name: poi.name }];
+                }
+            }
+
+            state.nav.isNavigating = true;
+            state.nav.destination = poi;
+            state.nav.routeNodes = fullRoute;
+            state.nav.currentSegmentIdx = 0;
+            state.nav.lastSpokenKey = '';
+            state.camera.followCar = true;
+
+            // UI更新
+            document.getElementById('searchTriggerPanel').classList.add('hidden');
+            document.getElementById('activeRoutePanel').classList.remove('hidden');
+            document.getElementById('navHeader').classList.remove('hidden');
+            document.getElementById('destNameDisplay').textContent = poi.name;
+
+            playChime('start');
+            speakJapanese(`${poi.name}までのナビゲーションを開始します。実際の交通規制に従って走行してください。`, true);
+            showToast(`ナビ開始: ${poi.name}`, 'success');
+        }
+
+        function stopNavigation() {
+            state.nav.isNavigating = false;
+            state.nav.destination = null;
+            state.nav.routeNodes = [];
+            state.car.speed = 0;
+
+            document.getElementById('searchTriggerPanel').classList.remove('hidden');
+            document.getElementById('activeRoutePanel').classList.add('hidden');
+            document.getElementById('navHeader').classList.add('hidden');
+            showToast('ルート案内を終了しました');
+        }
+
+        // ==========================================
+        // 6. 実機GPSナビ進行管理 ＆ 位置連動更新
+        // ==========================================
+        function updateNavigationProgress() {
+            if (!state.nav.isNavigating) {
+                return;
+            }
+
+            const route = state.nav.routeNodes;
+            const idx = state.nav.currentSegmentIdx;
+
+            if (idx >= route.length - 1) {
+                // 目的地到着！
+                playChime('arrive');
+                speakJapanese(`目的地、${state.nav.destination.name}周辺に到着しました。案内を終了します。`, true);
+                showToast(`🎉 ${state.nav.destination.name} に到着しました！`, 'success');
+                stopNavigation();
+                return;
+            }
+
+            const targetPoint = route[idx + 1];
+            const distToNext = getDistance(state.car, targetPoint);
+
+            // ウェイポイント通過判定（18m以内に入ったら次の区間へ）
+            if (distToNext < 18) {
+                state.nav.currentSegmentIdx++;
+                if (state.nav.currentSegmentIdx < route.length - 1) {
+                    playChime('turn');
+                }
+            }
+
+            // 残距離・到着予想時刻・ターンバイターンUIの更新
+            updateNavigationTelemetry();
+        }
+
+        function updateNavigationTelemetry() {
+            const route = state.nav.routeNodes;
+            const idx = state.nav.currentSegmentIdx;
+            if (idx >= route.length - 1) return;
+
+            const nextNode = route[idx + 1];
+            const distToNextTurn = Math.round(getDistance(state.car, nextNode));
+
+            // 合計残距離の計算
+            let totalRemDist = distToNextTurn;
+            for (let i = idx + 1; i < route.length - 1; i++) {
+                totalRemDist += getDistance(route[i], route[i + 1]);
+            }
+
+            // ターン指示生成
+            const prevNode = route[idx];
+            const afterNextNode = route[idx + 2] || null;
+            const instruction = getTurnInstruction(prevNode, nextNode, afterNextNode);
+
+            // UI反映
+            document.getElementById('nextTurnDist').textContent = distToNextTurn >= 1000
+                ? (distToNextTurn / 1000).toFixed(1)
+                : Math.max(10, Math.round(distToNextTurn / 10) * 10);
+            document.getElementById('nextTurnUnit').textContent = distToNextTurn >= 1000 ? 'km 先' : 'm 先';
+            document.getElementById('nextTurnText').textContent = instruction.text;
+            updateTurnIconSvg(instruction.icon);
+
+            if (afterNextNode && route[idx + 3]) {
+                const subInst = getTurnInstruction(nextNode, afterNextNode, route[idx + 3]);
+                document.getElementById('subTurnPanel').classList.remove('hidden');
+                document.getElementById('subTurnText').textContent = subInst.text;
+            } else {
+                document.getElementById('subTurnPanel').classList.add('hidden');
+            }
+
+            // 音声案内トリガー（200m手前 & 50m手前）
+            if (distToNextTurn <= 220 && distToNextTurn > 180) {
+                speakJapanese(`およそ200メートル先、${instruction.text}`);
+            } else if (distToNextTurn <= 65 && distToNextTurn > 35) {
+                speakJapanese(`まもなく、${instruction.text}`);
+            }
+
+            // ボトムバーの残距離・時間更新（実走行速度が10km/h以上なら実速度からETA計算）
+            const remKm = (totalRemDist / 1000).toFixed(1);
+            const calcSpeed = state.car.speed >= 10 ? state.car.speed : 35;
+            const remMinutes = Math.max(1, Math.ceil((totalRemDist / 1000) / calcSpeed * 60));
+            document.getElementById('remDistDisplay').textContent = remKm;
+            document.getElementById('remTimeDisplay').textContent = remMinutes;
+
+            const eta = new Date(Date.now() + remMinutes * 60000);
+            const hh = String(eta.getHours()).padStart(2, '0');
+            const mm = String(eta.getMinutes()).padStart(2, '0');
+            document.getElementById('etaDisplay').textContent = `到着予想 ${hh}:${mm}`;
+        }
+
+        // 実機GPS連動開始
+        function enableRealGps() {
+            if (!('geolocation' in navigator)) {
+                document.getElementById('statusLabel').textContent = 'GPS 非対応端末';
+                document.getElementById('offlineIndicator').className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+                showToast('この端末・ブラウザはGPS機能に対応していません', 'warn');
+                return;
+            }
+            if (state.settings.gpsWatchId !== null) {
+                navigator.geolocation.clearWatch(state.settings.gpsWatchId);
+            }
+
+            document.getElementById('statusLabel').textContent = 'GPS 測位中...';
+            document.getElementById('offlineIndicator').className = 'w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping';
+            showToast('端末のGPSセンサーと連動しています', 'info');
+
+            state.settings.gpsWatchId = navigator.geolocation.watchPosition(
+                (pos) => {
+                    const { latitude, longitude, speed, heading, accuracy } = pos.coords;
+                    state.settings.currentLat = latitude;
+                    state.settings.currentLon = longitude;
+                    state.settings.gpsAccuracy = Math.round(accuracy || 0);
+
+                    // 初回測位時に基準座標をセットし、登録済みGPS地点の相対座標も更新
+                    if (state.settings.gpsOriginLat === null) {
+                        state.settings.gpsOriginLat = latitude;
+                        state.settings.gpsOriginLon = longitude;
+                        MAP_DATA.pois.forEach(p => {
+                            if (p.lat !== undefined && p.lon !== undefined) {
+                                const loc = latLonToLocal(p.lat, p.lon);
+                                p.x = loc.x;
+                                p.y = loc.y;
+                            }
+                        });
+                    }
+
+                    const localPos = latLonToLocal(latitude, longitude);
+                    state.car.x = localPos.x;
+                    state.car.y = localPos.y;
+
+                    // 速度更新（m/s -> km/h）
+                    if (speed !== null && !isNaN(speed)) {
+                        state.car.speed = Math.round(speed * 3.6);
+                    }
+
+                    // 進行方位（GPSのheadingが有効ならそれを使用、なければ前回位置からの移動ベクトルで補完）
+                    if (heading !== null && !isNaN(heading) && speed > 0.8) {
+                        state.car.heading = (heading - 90) * (Math.PI / 180);
+                    } else if (state.settings.lastValidLat !== null) {
+                        const movedDist = getDistance(
+                            latLonToLocal(state.settings.lastValidLat, state.settings.lastValidLon),
+                            localPos
+                        );
+                        if (movedDist > 3.5) {
+                            state.car.heading = calcBearingRad(
+                                state.settings.lastValidLat,
+                                state.settings.lastValidLon,
+                                latitude,
+                                longitude
+                            );
+                            state.settings.lastValidLat = latitude;
+                            state.settings.lastValidLon = longitude;
+                        }
+                    } else {
+                        state.settings.lastValidLat = latitude;
+                        state.settings.lastValidLon = longitude;
+                    }
+
+                    document.getElementById('statusLabel').textContent = `GPS 測位完了 (±${state.settings.gpsAccuracy}m)`;
+                    document.getElementById('offlineIndicator').className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+                },
+                (err) => {
+                    let msg = 'GPS信号を取得できません。位置情報の許可を確認してください';
+                    if (err.code === 1) msg = '位置情報の利用がブロックされています（ブラウザ設定を確認）';
+                    document.getElementById('statusLabel').textContent = 'GPS 待機中 (信号弱)';
+                    document.getElementById('offlineIndicator').className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+                    showToast(msg, 'warn');
+                },
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 1000,
+                    timeout: 15000
+                }
+            );
+        }
+
+        // ==========================================
+        // 7. Canvas 2D / 3Dバードビュー レンダリングエンジン
+        // ==========================================
+        function resizeCanvas() {
+            canvas.width = window.innerWidth * window.devicePixelRatio;
+            canvas.height = window.innerHeight * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // ワールド座標 -> スクリーン座標変換（3Dバードビュー対応）
+        function worldToScreen(wx, wy) {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            const camX = state.camera.x;
+            const camY = state.camera.y;
+            const zoom = state.camera.zoom;
+
+            // 自車の進行方向が常に画面上向きになるよう回転（ヘディングアップ）
+            const rotAngle = state.camera.followCar ? (-state.car.heading - Math.PI / 2) : 0;
+
+            let dx = (wx - camX) * zoom;
+            let dy = (wy - camY) * zoom;
+
+            const rx = dx * Math.cos(rotAngle) - dy * Math.sin(rotAngle);
+            const ry = dx * Math.sin(rotAngle) + dy * Math.cos(rotAngle);
+
+            if (!state.camera.is3D) {
+                return {
+                    x: w / 2 + rx,
+                    y: h * 0.62 + ry,
+                    scale: zoom
+                };
+            }
+
+            // 疑似3Dパース投影（遠近感）
+            const horizonOffset = h * 0.68;
+            const depth = 1 - (ry / (h * 1.45));
+            const clampedDepth = Math.max(0.22, Math.min(2.2, depth));
+            const perspectiveScale = Math.pow(clampedDepth, 1.35);
+
+            return {
+                x: w / 2 + rx * perspectiveScale,
+                y: horizonOffset + ry * perspectiveScale * 0.65,
+                scale: zoom * perspectiveScale
+            };
+        }
+
+        function renderMap() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            const isNight = state.settings.isNightMode;
+
+            // カメラ追従スムージング
+            if (state.camera.followCar && !state.camera.isDragging) {
+                state.camera.x += (state.car.x - state.camera.x) * 0.15;
+                state.camera.y += (state.car.y - state.camera.y) * 0.15;
+            }
+
+            // 1. 背景ベース塗りつぶし
+            ctx.fillStyle = isNight ? '#0b1120' : '#f1f5f9';
+            ctx.fillRect(0, 0, w, h);
+
+            // 3Dモード時の空・地平線グラデーション
+            if (state.camera.is3D) {
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, h * 0.35);
+                if (isNight) {
+                    skyGrad.addColorStop(0, '#020617');
+                    skyGrad.addColorStop(1, '#0f172a');
+                } else {
+                    skyGrad.addColorStop(0, '#bae6fd');
+                    skyGrad.addColorStop(1, '#e0f2fe');
+                }
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, w, h * 0.25);
+            }
+
+            // 2. グリッド線（地形の移動感・距離感を強調）
+            drawGroundGrid(isNight);
+
+            // 3. 公園エリア描画
+            MAP_DATA.parks.forEach(park => {
+                const p1 = worldToScreen(park.x, park.y);
+                const p2 = worldToScreen(park.x + park.w, park.y);
+                const p3 = worldToScreen(park.x + park.w, park.y + park.h);
+                const p4 = worldToScreen(park.x, park.y + park.h);
+
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.lineTo(p3.x, p3.y);
+                ctx.lineTo(p4.x, p4.y);
+                ctx.closePath();
+                ctx.fillStyle = isNight ? 'rgba(6, 78, 59, 0.35)' : 'rgba(167, 243, 208, 0.7)';
+                ctx.fill();
+            });
+
+            // 4. 河川の描画
+            ctx.beginPath();
+            MAP_DATA.river.forEach((pt, i) => {
+                const sp = worldToScreen(pt.x, pt.y);
+                if (i === 0) ctx.moveTo(sp.x, sp.y);
+                else ctx.lineTo(sp.x, sp.y);
+            });
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = 42 * state.camera.zoom;
+            ctx.strokeStyle = isNight ? '#1e3a8a' : '#7dd3fc';
+            ctx.stroke();
+
+            // 5. 道路ネットワークの描画（外枠 + 内側アスファルト）
+            MAP_DATA.edges.forEach(edge => {
+                const n1 = MAP_DATA.nodes.find(n => n.id === edge.from);
+                const n2 = MAP_DATA.nodes.find(n => n.id === edge.to);
+                if (!n1 || !n2) return;
+
+                const s1 = worldToScreen(n1.x, n1.y);
+                const s2 = worldToScreen(n2.x, n2.y);
+                const avgScale = (s1.scale + s2.scale) / 2;
+
+                const baseWidth = edge.type === 'highway' ? 28 : (edge.type === 'main' ? 22 : 15);
+                const roadW = Math.max(4, baseWidth * avgScale);
+
+                // 道路縁取り
+                ctx.beginPath();
+                ctx.moveTo(s1.x, s1.y);
+                ctx.lineTo(s2.x, s2.y);
+                ctx.lineWidth = roadW + 3;
+                ctx.strokeStyle = isNight ? '#334155' : '#94a3b8';
+                ctx.stroke();
+
+                // 道路本体
+                ctx.beginPath();
+                ctx.moveTo(s1.x, s1.y);
+                ctx.lineTo(s2.x, s2.y);
+                ctx.lineWidth = roadW;
+                if (edge.type === 'highway') {
+                    ctx.strokeStyle = isNight ? '#0369a1' : '#38bdf8';
+                } else {
+                    ctx.strokeStyle = isNight ? '#1e293b' : '#ffffff';
+                }
+                ctx.stroke();
+
+                // センターライン（幹線道路以上）
+                if (edge.type !== 'local' && avgScale > 0.45) {
+                    ctx.beginPath();
+                    ctx.moveTo(s1.x, s1.y);
+                    ctx.lineTo(s2.x, s2.y);
+                    ctx.setLineDash([8 * avgScale, 8 * avgScale]);
+                    ctx.lineWidth = Math.max(1, 1.5 * avgScale);
+                    ctx.strokeStyle = edge.type === 'highway' ? '#fde047' : 'rgba(148, 163, 184, 0.5)';
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            });
+
+            // 6. ナビゲーションルートハイライト線
+            if (state.nav.isNavigating && state.nav.routeNodes.length > 1) {
+                const route = state.nav.routeNodes;
+                ctx.beginPath();
+                // 現在位置から次のノードへ
+                const carSp = worldToScreen(state.car.x, state.car.y);
+                ctx.moveTo(carSp.x, carSp.y);
+
+                for (let i = state.nav.currentSegmentIdx + 1; i < route.length; i++) {
+                    const sp = worldToScreen(route[i].x, route[i].y);
+                    ctx.lineTo(sp.x, sp.y);
+                }
+
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.lineWidth = Math.max(7, 14 * state.camera.zoom);
+                ctx.strokeStyle = '#10b981'; // エメラルドグリーン案内線
+                ctx.stroke();
+
+                // ルート上の進行方向矢印装飾
+                ctx.lineWidth = Math.max(2, 4 * state.camera.zoom);
+                ctx.strokeStyle = '#a7f3d0';
+                ctx.setLineDash([10, 18]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // 7. 交差点名ラベルの描画
+            MAP_DATA.nodes.forEach(node => {
+                const sp = worldToScreen(node.x, node.y);
+                if (sp.x < -50 || sp.x > w + 50 || sp.y < 40 || sp.y > h) return;
+                if (sp.scale < 0.55) return;
+
+                // 交差点ドット
+                ctx.beginPath();
+                ctx.arc(sp.x, sp.y, 4 * sp.scale, 0, Math.PI * 2);
+            // POI（施設データ）に実際のGPS座標がある場合は常に最新の相対位置へ同期
+            MAP_DATA.pois.forEach(poi => {
+                if (poi.lat !== undefined && poi.lon !== undefined && state.settings.gpsOriginLat !== null) {
+                    const pos = latLonToLocal(poi.lat, poi.lon);
+                    poi.x = pos.x;
+                    poi.y = pos.y;
+                }
+            });
+
+            // 8. POI（施設アイコン＆ラベル）の描画
+            MAP_DATA.pois.forEach(poi => {
+                const sp = worldToScreen(poi.x, poi.y);
+                if (sp.x < -60 || sp.x > w + 60 || sp.y < 30 || sp.y > h) return;
+
+                const isDest = state.nav.destination && state.nav.destination.id === poi.id;
+                const radius = isDest ? 16 : 12;
+
+                // ピン背景
+                ctx.beginPath();
+                ctx.arc(sp.x, sp.y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = isDest ? '#f43f5e' :
+                                poi.category === 'CUSTOM' ? '#8b5cf6' :
+                                poi.category === 'STATION' ? '#0284c7' :
+                                poi.category === 'GAS' ? '#d97706' :
+                                poi.category === 'HOME' ? '#4f46e5' : '#059669';
+                ctx.fill();
+                ctx.lineWidth = 2.5;
+                ctx.strokeStyle = '#ffffff';
+                ctx.stroke();
+
+                // アイコン文字
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 11px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                const symbol = poi.category === 'CUSTOM' ? '★' :
+                               poi.category === 'STATION' ? '駅' :
+                               poi.category === 'GAS' ? 'GS' :
+                               poi.category === 'HOME' ? '家' :
+                               poi.category === 'PARK' ? '公' : '店';
+                ctx.fillText(symbol, sp.x, sp.y);
+
+                // 施設名ラベル
+                if (sp.scale > 0.5 || isDest) {
+                    ctx.font = 'bold 12px "Noto Sans JP", sans-serif';
+                    const textWidth = ctx.measureText(poi.name).width;
+                    ctx.fillStyle = isNight ? 'rgba(15, 23, 42, 0.85)' : 'rgba(255, 255, 255, 0.9)';
+                    ctx.beginPath();
+                    ctx.roundRect(sp.x - textWidth / 2 - 6, sp.y + radius + 4, textWidth + 12, 20, 6);
+                    ctx.fill();
+
+                    ctx.fillStyle = isDest ? '#fda4af' : (isNight ? '#f8fafc' : '#0f172a');
+                    ctx.fillText(poi.name, sp.x, sp.y + radius + 14);
+                }
+            });
+
+            // 9. 自車アイコン（3D風ナビゲーションカーソル）の描画
+            drawCarCursor();
+
+            // 10. 地平線フォグ（3Dモード時の奥行き演出）
+            if (state.camera.is3D) {
+                const fogGrad = ctx.createLinearGradient(0, h * 0.18, 0, h * 0.34);
+                const bgHex = isNight ? '11, 17, 32' : '241, 245, 249';
+                fogGrad.addColorStop(0, `rgba(${bgHex}, 1)`);
+                fogGrad.addColorStop(1, `rgba(${bgHex}, 0)`);
+                ctx.fillStyle = fogGrad;
+                ctx.fillRect(0, h * 0.18, w, h * 0.16);
+            }
+
+            // スピードメーター数値更新
+            document.getElementById('speedValue').textContent = Math.round(state.car.speed);
+        }
+
+        function drawGroundGrid(isNight) {
+            ctx.strokeStyle = isNight ? 'rgba(51, 65, 85, 0.25)' : 'rgba(203, 213, 225, 0.5)';
+            ctx.lineWidth = 1;
+            const step = 200;
+            for (let gx = -1200; gx <= 1200; gx += step) {
+                const p1 = worldToScreen(gx, -1200);
+                const p2 = worldToScreen(gx, 1200);
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            }
+            for (let gy = -1200; gy <= 1200; gy += step) {
+                const p1 = worldToScreen(-1200, gy);
+                const p2 = worldToScreen(1200, gy);
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            }
+        }
+
+        function drawCarCursor() {
+            const sp = worldToScreen(state.car.x, state.car.y);
+            const rot = state.camera.followCar ? 0 : (state.car.heading + Math.PI / 2);
+
+            ctx.save();
+            ctx.translate(sp.x, sp.y);
+            ctx.rotate(rot);
+
+            // GPS精度サークル（パルス風）
+            const pulse = (Math.sin(Date.now() / 350) + 1) * 0.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, 26 + pulse * 10, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(56, 189, 248, ${0.22 - pulse * 0.15})`;
+            ctx.fill();
+
+            // 自車三角コーン（影）
+            ctx.beginPath();
+            ctx.moveTo(0, -22);
+            ctx.lineTo(16, 16);
+            ctx.lineTo(0, 10);
+            ctx.lineTo(-16, 16);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+            ctx.fill();
+
+            // 自車三角コーン（本体）
+            ctx.beginPath();
+            ctx.moveTo(0, -24);
+            ctx.lineTo(15, 13);
+            ctx.lineTo(0, 7);
+            ctx.lineTo(-15, 13);
+            ctx.closePath();
+            ctx.fillStyle = '#0ea5e9';
+            ctx.fill();
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        // ==========================================
+        // 8. UIイベント・検索モーダル・マップ操作
+        // ==========================================
+        function renderPoiList(filterCat = 'ALL', keyword = '') {
+            const container = document.getElementById('poiListContainer');
+            container.innerHTML = '';
+
+            const filtered = MAP_DATA.pois.filter(poi => {
+                const matchCat = filterCat === 'ALL' || poi.category === filterCat;
+                const matchKey = !keyword || poi.name.includes(keyword) || poi.desc.includes(keyword);
+                return matchCat && matchKey;
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = `<div class="text-center py-8 text-slate-400 text-sm">一致するオフライン施設が見つかりません</div>`;
+                return;
+            }
+
+            filtered.forEach(poi => {
+                const dist = Math.round(getDistance(state.car, poi));
+                const distStr = dist >= 1000 ? `${(dist / 1000).toFixed(1)} km` : `${dist} m`;
+
+                const item = document.createElement('button');
+                item.className = 'w-full text-left bg-slate-800/80 hover:bg-slate-700/90 border border-slate-700/60 p-3.5 rounded-2xl transition flex items-center justify-between gap-3 group';
+                item.innerHTML = `
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2">
+                            <span class="font-bold text-white text-sm group-hover:text-sky-400 transition truncate">${poi.name}</span>
+                        </div>
+                        <p class="text-xs text-slate-400 mt-0.5 truncate">${poi.desc}</p>
+                    </div>
+                    <div class="text-right flex-shrink-0">
+                        <span class="text-xs font-extrabold text-emerald-400 bg-emerald-950/80 px-2.5 py-1 rounded-lg border border-emerald-700/40">${distStr}</span>
+                    </div>
+                `;
+                item.addEventListener('click', () => {
+                    document.getElementById('searchModal').classList.add('hidden');
+                    startNavigationTo(poi);
+                });
+                container.appendChild(item);
+            });
+        }
+
+        // モーダル開閉
+        document.getElementById('openSearchModalBtn').addEventListener('click', () => {
+            document.getElementById('searchModal').classList.remove('hidden');
+            renderPoiList();
+        });
+        document.getElementById('closeSearchModalBtn').addEventListener('click', () => {
+            document.getElementById('searchModal').classList.add('hidden');
+        });
+
+        // 実機GPS：現在地をそのままオフライン地点として保存
+        document.getElementById('saveCurrentGpsBtn').addEventListener('click', () => {
+            if (state.settings.currentLat === null || state.settings.currentLon === null) {
+                showToast('まだGPS測位が完了していません（屋外でお試しください）', 'warn');
+                return;
+            }
+            const nameInput = document.getElementById('customNameInput').value.trim();
+            const label = nameInput || `登録地点 (${new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })})`;
+            const newPoi = {
+                id: 'USER_' + Date.now(),
+                name: label,
+                category: 'CUSTOM',
+                isUserSaved: true,
+                lat: state.settings.currentLat,
+                lon: state.settings.currentLon,
+                x: state.car.x,
+                y: state.car.y,
+                desc: `GPS座標: ${state.settings.currentLat.toFixed(5)}, ${state.settings.currentLon.toFixed(5)}`
+            };
+            MAP_DATA.pois.unshift(newPoi);
+            saveCustomPoisToStorage();
+            document.getElementById('customNameInput').value = '';
+            renderPoiList('CUSTOM');
+            showToast(`「${label}」をオフライン保存しました`, 'success');
+        });
+
+        // 実機GPS：緯度・経度を手入力して目的地登録＆ナビ開始
+        document.getElementById('addCustomLatLonBtn').addEventListener('click', () => {
+            const nameVal = document.getElementById('customNameInput').value.trim() || '指定GPS地点';
+            const coordStr = document.getElementById('customLatLonInput').value.trim();
+            const parts = coordStr.split(/[,、\s]+/);
+            if (parts.length < 2) {
+                showToast('「緯度,経度」の形式で入力してください（例: 42.923,143.200）', 'warn');
+                return;
+            }
+            const lat = parseFloat(parts[0]);
+            const lon = parseFloat(parts[1]);
+            if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+                showToast('有効な緯度・経度を入力してください', 'warn');
+                return;
+            }
+
+            const localPos = state.settings.gpsOriginLat !== null ? latLonToLocal(lat, lon) : { x: 0, y: -500 };
+            const newPoi = {
+                id: 'USER_' + Date.now(),
+                name: nameVal,
+                category: 'CUSTOM',
+                isUserSaved: true,
+                lat: lat,
+                lon: lon,
+                x: localPos.x,
+                y: localPos.y,
+                desc: `GPS座標: ${lat.toFixed(5)}, ${lon.toFixed(5)}`
+            };
+            MAP_DATA.pois.unshift(newPoi);
+            saveCustomPoisToStorage();
+            document.getElementById('customNameInput').value = '';
+            document.getElementById('customLatLonInput').value = '';
+            document.getElementById('searchModal').classList.add('hidden');
+            startNavigationTo(newPoi);
+        });
+
+        // 検索入力・カテゴリフィルタ
+        let currentCat = 'ALL';
+        document.getElementById('poiSearchInput').addEventListener('input', (e) => {
+            renderPoiList(currentCat, e.target.value.trim());
+        });
+
+        document.querySelectorAll('.cat-chip').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.cat-chip').forEach(b => {
+                    b.className = 'cat-chip px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 whitespace-nowrap';
+                });
+                btn.className = 'cat-chip active px-3 py-1.5 rounded-lg text-xs font-bold bg-sky-600 text-white whitespace-nowrap';
+                currentCat = btn.dataset.cat;
+                renderPoiList(currentCat, document.getElementById('poiSearchInput').value.trim());
+            });
+        });
+
+        // ワンタッチ自宅帰還ボタン
+        document.getElementById('quickHomeBtn').addEventListener('click', () => {
+            const homePoi = MAP_DATA.pois.find(p => p.category === 'HOME');
+            if (homePoi) startNavigationTo(homePoi);
+        });
+
+        // 案内終了ボタン
+        document.getElementById('cancelRouteBtn').addEventListener('click', stopNavigation);
+
+        // 視点・テーマ・音声・ズームコントロール
+        document.getElementById('toggleViewBtn').addEventListener('click', () => {
+            state.camera.is3D = !state.camera.is3D;
+            document.getElementById('viewModeText').textContent = state.camera.is3D ? '3D' : '2D';
+            showToast(state.camera.is3D ? '3D バードビュー表示' : '2D 俯瞰マップ表示');
+        });
+
+        document.getElementById('toggleVoiceBtn').addEventListener('click', () => {
+            state.settings.voiceEnabled = !state.settings.voiceEnabled;
+            document.getElementById('voiceOnIcon').classList.toggle('hidden', !state.settings.voiceEnabled);
+            document.getElementById('voiceOffIcon').classList.toggle('hidden', state.settings.voiceEnabled);
+            showToast(state.settings.voiceEnabled ? '音声案内：ON' : '音声案内：ミュート');
+            if (state.settings.voiceEnabled) speakJapanese('音声案内をオンにしました', true);
+        });
+
+        document.getElementById('toggleThemeBtn').addEventListener('click', () => {
+            state.settings.isNightMode = !state.settings.isNightMode;
+            document.getElementById('moonIcon').classList.toggle('hidden', !state.settings.isNightMode);
+            document.getElementById('sunIcon').classList.toggle('hidden', state.settings.isNightMode);
+        });
+
+        document.getElementById('zoomInBtn').addEventListener('click', () => {
+            state.camera.zoom = Math.min(2.2, state.camera.zoom + 0.2);
+        });
+        document.getElementById('zoomOutBtn').addEventListener('click', () => {
+            state.camera.zoom = Math.max(0.4, state.camera.zoom - 0.2);
+        });
+
+        // GPSの現在地を取得して地図の中央に表示する
+        function centerOnGpsLocation() {
+            state.camera.followCar = true;
+            state.camera.x = state.car.x;
+            state.camera.y = state.car.y;
+
+            if ('geolocation' in navigator) {
+                showToast('GPSの現在地を中央に表示します...', 'info');
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        const { latitude, longitude, accuracy } = pos.coords;
+                        state.settings.currentLat = latitude;
+                        state.settings.currentLon = longitude;
+                        state.settings.gpsAccuracy = Math.round(accuracy || 0);
+
+                        if (state.settings.gpsOriginLat === null) {
+                            state.settings.gpsOriginLat = latitude;
+                            state.settings.gpsOriginLon = longitude;
+                        }
+
+                        const localPos = latLonToLocal(latitude, longitude);
+                        state.car.x = localPos.x;
+                        state.car.y = localPos.y;
+                        state.camera.x = localPos.x;
+                        state.camera.y = localPos.y;
+                        state.camera.followCar = true;
+
+                        document.getElementById('statusLabel').textContent = `GPS 測位完了 (±${state.settings.gpsAccuracy}m)`;
+                        document.getElementById('offlineIndicator').className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+                        showToast(`現在地を中央に表示しました (${latitude.toFixed(5)}, ${longitude.toFixed(5)})`, 'success');
+                    },
+                    () => {
+                        showToast('GPS測位中です。屋外で数秒お待ちください', 'warn');
+                    },
+                    { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+                );
+            }
+        }
+
+        document.getElementById('recenterBtn').addEventListener('click', centerOnGpsLocation);
+
+        document.getElementById('downloadAreaMapBtn').addEventListener('click', downloadRealAreaRoadMap);
+        document.addEventListener('click', requestWakeLock, { once: true });
+
+        // ==========================================
+        // 9. マップのドラッグ移動 ＆ タップで目的地設定
+        // ==========================================
+        let pointerDownTime = 0;
+        let pointerDownPos = { x: 0, y: 0 };
+
+        function handlePointerDown(clientX, clientY) {
+            state.camera.isDragging = true;
+            pointerDownTime = Date.now();
+            pointerDownPos = { x: clientX, y: clientY };
+            state.camera.dragStartX = clientX;
+            state.camera.dragStartY = clientY;
+        }
+
+        function handlePointerMove(clientX, clientY) {
+            if (!state.camera.isDragging) return;
+            const dx = clientX - state.camera.dragStartX;
+            const dy = clientY - state.camera.dragStartY;
+
+            if (Math.hypot(clientX - pointerDownPos.x, clientY - pointerDownPos.y) > 8) {
+                state.camera.followCar = false;
+
+                const rotAngle = state.camera.followCar ? (-state.car.heading - Math.PI / 2) : 0;
+                const moveScale = 1 / state.camera.zoom;
+                const worldDx = (dx * Math.cos(-rotAngle) - dy * Math.sin(-rotAngle)) * moveScale;
+                const worldDy = (dx * Math.sin(-rotAngle) + dy * Math.cos(-rotAngle)) * moveScale;
+
+                state.camera.x -= worldDx;
+                state.camera.y -= worldDy;
+                state.camera.dragStartX = clientX;
+                state.camera.dragStartY = clientY;
+            }
+        }
+
+        function handlePointerUp(clientX, clientY) {
+            state.camera.isDragging = false;
+            const elapsed = Date.now() - pointerDownTime;
+            const moved = Math.hypot(clientX - pointerDownPos.x, clientY - pointerDownPos.y);
+
+            // 短時間タップ（クリック）で地図上の施設を選択可能に
+            if (elapsed < 280 && moved < 10) {
+                for (const poi of MAP_DATA.pois) {
+                    const sp = worldToScreen(poi.x, poi.y);
+                    if (Math.hypot(sp.x - clientX, sp.y - clientY) < 28) {
+                        startNavigationTo(poi);
+                        return;
+                    }
+                }
+            }
+        }
+
+        // マウスイベント
+        canvas.addEventListener('mousedown', e => handlePointerDown(e.clientX, e.clientY));
+        window.addEventListener('mousemove', e => handlePointerMove(e.clientX, e.clientY));
+        window.addEventListener('mouseup', e => handlePointerUp(e.clientX, e.clientY));
+        canvas.addEventListener('wheel', e => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.1 : 0.1;
+            state.camera.zoom = Math.max(0.4, Math.min(2.2, state.camera.zoom + delta));
+        }, { passive: false });
+
+        // タッチイベント
+        canvas.addEventListener('touchstart', e => {
+            if (e.touches.length === 1) {
+                handlePointerDown(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: true });
+        canvas.addEventListener('touchmove', e => {
+            if (e.touches.length === 1) {
+                handlePointerMove(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: true });
+        canvas.addEventListener('touchend', e => {
+            if (e.changedTouches.length === 1) {
+                handlePointerUp(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+            }
+        });
+
+        // ==========================================
+        // 10. メインアニメーションループ
+        // ==========================================
+        function mainLoop() {
+            updateNavigationProgress();
+            renderMap();
+
+            requestAnimationFrame(mainLoop);
+        }
+
+        window.onload = () => {
+            initWebAppPWA();
+            loadCachedOsmMap();
+            loadSavedCustomPois();
+            // 起動時に実機GPS連動を開始
+            enableRealGps();
+            requestAnimationFrame(mainLoop);
+            setTimeout(() => {
+                showToast('Webアプリ起動完了：右上の「周辺道路をDL」で実道路をオフライン保存できます', 'info');
+            }, 600);
+        };
+    </script>
+</body>
+</html>
