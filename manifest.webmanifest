@@ -1,0 +1,11 @@
+{
+  "name": "michi — オフラインGPSナビ",
+  "short_name": "michiナビ",
+  "description": "OpenStreetMap対応のオフラインGPSナビ",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101a27",
+  "theme_color": "#101a27"
+}
