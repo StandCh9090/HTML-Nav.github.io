@@ -1,0 +1,2 @@
+/* Minimal additions for voice controls */
+.top-actions{display:flex;align-items:center;gap:10px}.icon-button{width:34px;height:34px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);font-size:15px;cursor:pointer}.icon-button.muted{opacity:.45}

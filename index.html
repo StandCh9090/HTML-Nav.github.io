@@ -13,7 +13,10 @@
   <main class="app-shell">
     <header class="topbar">
       <a class="brand" href="#" aria-label="michi ホーム"><span class="brand-mark">m</span><span>michi<span class="brand-sub"> GPS NAVI</span></span></a>
-      <div class="connection"><span id="connectionDot" class="connection-dot"></span><span id="connectionText">接続確認中</span></div>
+      <div class="top-actions">
+        <button id="voiceBtn" class="icon-button" aria-label="音声案内をオン" title="音声案内">🔊</button>
+        <div class="connection"><span id="connectionDot" class="connection-dot"></span><span id="connectionText">接続確認中</span></div>
+      </div>
     </header>
 
     <section class="map-wrap" aria-label="地図">
@@ -41,7 +44,7 @@
         <label class="field"><span>経度</span><input id="destLon" inputmode="decimal" type="number" step="any" placeholder="例: 139.7671" aria-label="目的地の経度"></label>
       </div>
       <button id="routeBtn" class="primary-button">ルートを検索 <span aria-hidden="true">→</span></button>
-      <p class="helper" id="helperText">ルート検索にはネット接続と現在地の許可が必要です。検索済みルートは保存され、圏外でもGPSで案内を続けます。</p>
+      <p class="helper" id="helperText">ルート検索にはネット接続と現在地の許可が必要です。検索済みルートと地図タイルは端末へ保存されます。表示した地図は自動でオフライン用に蓄積されます。</p>
       <div class="route-summary hidden" id="routeSummary"><span id="routeDistance"></span><span class="summary-divider">·</span><span id="routeDuration"></span><span class="summary-note">この端末に保存済み</span></div>
     </section>
   </main>
